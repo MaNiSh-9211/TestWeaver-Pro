@@ -28,6 +28,61 @@ app.get('/health', (req, res) => {
     });
 });
 
+// Mock authentication endpoints for frontend
+app.post('/api/auth/login', (req, res) => {
+    const { email, password } = req.body;
+    
+    // Mock authentication - in production, validate against database
+    if (email && password) {
+        const mockUser = {
+            id: '1',
+            name: email.split('@')[0],
+            email: email,
+            role: 'user'
+        };
+        
+        const mockToken = 'mock-jwt-token-' + Date.now();
+        
+        res.json({
+            success: true,
+            user: mockUser,
+            token: mockToken
+        });
+    } else {
+        res.status(400).json({
+            success: false,
+            message: 'Email and password are required'
+        });
+    }
+});
+
+app.post('/api/auth/register', (req, res) => {
+    const { name, email, password } = req.body;
+    
+    // Mock registration - in production, create user in database
+    if (name && email && password) {
+        const mockUser = {
+            id: '1',
+            name: name,
+            email: email,
+            role: 'user'
+        };
+        
+        const mockToken = 'mock-jwt-token-' + Date.now();
+        
+        res.json({
+            success: true,
+            user: mockUser,
+            token: mockToken
+        });
+    } else {
+        res.status(400).json({
+            success: false,
+            message: 'Name, email and password are required'
+        });
+    }
+});
+
 // Serve the web interface
 app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));

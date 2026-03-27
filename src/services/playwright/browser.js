@@ -12,11 +12,12 @@ class BrowserManager {
     async initialize(options = {}) {
         try {
             if (this.isInitialized) {
+                logger.info('Browser already initialized, skipping...');
                 return;
             }
             
             const defaultOptions = {
-                headless: true,
+                headless: false, // Default to visible browser
                 args: [
                     '--no-sandbox',
                     '--disable-setuid-sandbox',
@@ -27,11 +28,38 @@ class BrowserManager {
                 ]
             };
             
-            const browserOptions = { ...defaultOptions, ...options };
+            // Merge options - user options override defaults
+            const browserOptions = { 
+                ...defaultOptions, 
+                ...options,
+                // Ensure headless is explicitly set from options if provided
+                headless: options.headless !== undefined ? options.headless : defaultOptions.headless
+            };
             
-            logger.info('Initializing browser with options:', browserOptions);
+            logger.info('🚀 Initializing browser with options:', JSON.stringify(browserOptions, null, 2));
+            console.log('🚀 Launching browser...');
+            console.log(`   Headless mode: ${browserOptions.headless ? 'ON (browser hidden)' : 'OFF (browser will be visible)'}`);
             
+            try {
             this.browser = await chromium.launch(browserOptions);
+            } catch (launchError) {
+                if (launchError.message.includes('Executable doesn\'t exist') || 
+                    launchError.message.includes('Browser not found') ||
+                    launchError.message.includes('executable')) {
+                    console.error('❌ Browser executable not found!');
+                    console.error('💡 Please install Playwright browsers by running:');
+                    console.error('   npx playwright install chromium');
+                    throw new Error('Playwright browser not installed. Run: npx playwright install chromium');
+                }
+                throw launchError;
+            }
+            
+            if (!this.browser) {
+                throw new Error('Browser launch returned null');
+            }
+            
+            logger.info('✅ Browser launched successfully');
+            console.log('✅ Browser launched!');
             
             const contextOptions = {
                 viewport: options.viewport || { width: 1920, height: 1080 },
@@ -41,7 +69,16 @@ class BrowserManager {
             };
             
             this.context = await this.browser.newContext(contextOptions);
+            
+            if (!this.context) {
+                throw new Error('Browser context creation returned null');
+            }
+            
             this.page = await this.context.newPage();
+            
+            if (!this.page) {
+                throw new Error('Browser page creation returned null');
+            }
             
             // Set default timeout
             this.page.setDefaultTimeout(options.timeout || 30000);
@@ -79,7 +116,8 @@ class BrowserManager {
             });
             
             this.isInitialized = true;
-            logger.info('Browser initialized successfully');
+            logger.info('✅ Browser initialized successfully');
+            console.log('✅ Browser page created and ready!');
             
         } catch (error) {
             logger.error('Failed to initialize browser:', error);

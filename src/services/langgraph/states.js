@@ -1,223 +1,235 @@
-const { z } = require('zod');
+﻿const logger = require('../../utils/logger');
 
-// Define the state schema for the workflow
-const WorkflowStateSchema = z.object({
-    // Test identification
-    testId: z.string(),
-    userStory: z.string(),
-    url: z.string(),
-    
-    // Test result reference
-    testResult: z.any(), // TestResult instance
-    
-    // Workflow status
-    status: z.enum([
-        'initialized',
-        'html_processed',
-        'selectors_generated',
-        'script_generated',
-        'completed',
-        'failed',
-        'report_generated'
-    ]).optional(),
-    
-    // HTML processing
-    htmlContent: z.string().optional(),
-    cleanedHtml: z.string().optional(),
-    tokenCount: z.number().optional(),
-    
-    // AI generation results
-    generatedSelectors: z.array(z.any()).optional(),
-    generatedScript: z.any().optional(),
-    
-    // Execution results
-    executionResults: z.array(z.any()).optional(),
-    testSuccess: z.boolean().optional(),
-    executionTime: z.number().optional(),
-    
-    // Report generation
-    report: z.any().optional(),
-    
-    // Error handling
-    error: z.string().optional(),
-    currentStep: z.string().optional(),
-    
-    // Timing
-    startTime: z.date().optional(),
-    endTime: z.date().optional(),
-
-    shouldContinue: z.boolean().optional(),
-
-    });
-
-class WorkflowState {
-    constructor(data) {
-        // Validate the initial state
-        const validatedData = WorkflowStateSchema.parse(data);
-        
-        // Assign properties
-        Object.assign(this, validatedData);
-        
-        // Set default values
-        this.status = this.status || 'initialized';
-        this.generatedSelectors = this.generatedSelectors || [];
-        this.executionResults = this.executionResults || [];
-        this.startTime = this.startTime || new Date();
-        this.shouldContinue = this.shouldContinue ?? true;
-    }
-    
-    updateStatus(newStatus) {
-        this.status = newStatus;
-        this.currentStep = newStatus;
-    }
-    
-    setError(error) {
-        this.error = error;
-        this.status = 'failed';
-    }
-    
-    isCompleted() {
-        return this.status === 'completed' || this.status === 'report_generated';
-    }
-    
-    isFailed() {
-        return this.status === 'failed' || !!this.error;
-    }
-    
-    getDuration() {
-        if (!this.startTime) return 0;
-        
-        const endTime = this.endTime || new Date();
-        return endTime.getTime() - this.startTime.getTime();
-    }
-    
-    toJSON() {
-        return {
-            testId: this.testId,
-            userStory: this.userStory,
-            url: this.url,
-            status: this.status,
-            tokenCount: this.tokenCount,
-            generatedSelectors: this.generatedSelectors,
-            generatedScript: this.generatedScript,
-            executionResults: this.executionResults,
-            testSuccess: this.testSuccess,
-            executionTime: this.executionTime,
-            error: this.error,
-            currentStep: this.currentStep,
-            startTime: this.startTime,
-            endTime: this.endTime,
-            duration: this.getDuration()
-        };
-    }
-}
-
-// State transition helpers
-class StateTransitions {
-    static canTransitionTo(currentStatus, nextStatus) {
-        const validTransitions = {
-            'initialized': ['html_processed', 'failed'],
-            'html_processed': ['selectors_generated', 'failed'],
-            'selectors_generated': ['script_generated', 'failed'],
-            'script_generated': ['completed', 'failed'],
-            'completed': ['report_generated', 'failed'],
-            'failed': ['report_generated'],
-            'report_generated': []
-        };
-        
-        return validTransitions[currentStatus]?.includes(nextStatus) || false;
-    }
-    
-    static getNextValidStates(currentStatus) {
-        const validTransitions = {
-            'initialized': ['html_processed', 'failed'],
-            'html_processed': ['selectors_generated', 'failed'],
-            'selectors_generated': ['script_generated', 'failed'],
-            'script_generated': ['completed', 'failed'],
-            'completed': ['report_generated', 'failed'],
-            'failed': ['report_generated'],
-            'report_generated': []
-        };
-        
-        return validTransitions[currentStatus] || [];
-    }
-    
-    static isTerminalState(status) {
-        return status === 'report_generated' || status === 'failed';
-    }
-}
-
-// State validation helpers
-class StateValidation {
-    static validateStateData(data) {
-        try {
-            return WorkflowStateSchema.parse(data);
-        } catch (error) {
-            throw new Error(`Invalid workflow state data: ${error.message}`);
-        }
-    }
-    
-    static validateTransition(currentState, nextState) {
-        if (!StateTransitions.canTransitionTo(currentState.status, nextState.status)) {
-            throw new Error(
-                `Invalid state transition from ${currentState.status} to ${nextState.status}`
-            );
-        }
-        
-        return true;
-    }
-    
-    static validateRequiredFields(state, requiredFields) {
-        const missingFields = requiredFields.filter(field => !state[field]);
-        
-        if (missingFields.length > 0) {
-            throw new Error(
-                `Missing required fields for current state: ${missingFields.join(', ')}`
-            );
-        }
-        
-        return true;
-    }
-}
-
-// State factory for creating initial states
 class StateFactory {
-    static createInitialState(testId, userStory, url, testResult) {
-        return new WorkflowState({
+    static createInitialState(testId, userStory, baseUrl, testResult) {
+        return {
             testId,
             userStory,
-            url,
+            baseUrl,
+            currentUrl: baseUrl,
             testResult,
-            status: 'initialized',
-            startTime: new Date()
-        });
+            
+            // Testcase tracking
+            testcases: [],
+            currentTestcaseIndex: 0,
+            
+            // Selector management with fallback
+            currentSelectors: [], // Array of 3 selectors per testcase
+            currentSelectorIndex: 0,
+            
+            // Execution tracking
+            executionResults: [], // ALL execution results (for final summary)
+            recentExecutionResults: [], // Only last executed batch (for LLM input)
+            lastExecutionBatchStartIndex: 0, // Track where last batch started
+            lastExecutionBatchEndIndex: 0, // Track where last batch ended
+            passedTestcases: [],
+            failedTestcases: [],
+            
+            // Failed testcases with their selectors for regeneration
+            failedTestcasesWithSelectors: [], // [{ testcaseId, selectors: [selector1, selector2, selector3], error }]
+            
+            // HTML state
+            currentHtml: '',
+            cleanedHtml: '',
+            
+            // Workflow state
+            shouldContinue: true,
+            status: 'running',
+            testSuccess: false,
+            
+            // API rate limit handling
+            lastApiCallTime: 0,
+            apiRateLimitDelay: 30000, // 30 seconds
+            
+            // Retry tracking
+            retryCount: 0,
+            maxRetries: 3,
+            
+            // Error tracking
+            errors: [],
+            
+            // Metadata
+            startTime: new Date(),
+            endTime: null
+        };
     }
     
-    static createFromTestResult(testResult) {
-        return new WorkflowState({
-            testId: testResult.testId,
-            userStory: testResult.userStory,
-            url: testResult.url,
-            testResult,
-            status: testResult.status || 'initialized',
-            htmlContent: testResult.htmlContent,
-            cleanedHtml: testResult.cleanedHtml,
-            tokenCount: testResult.tokenCount,
-            generatedSelectors: testResult.generatedSelectors,
-            generatedScript: testResult.generatedScript,
-            executionResults: testResult.executionResults,
-            executionTime: testResult.executionTime,
-            startTime: testResult.createdAt
-            
-            
+    static updateState(currentState, updates) {
+        return {
+            ...currentState,
+            ...updates,
+            lastUpdated: new Date()
+        };
+    }
+    
+    static addExecutionResult(state, result) {
+        // Add to full execution results (for final summary)
+        const executionResults = [...state.executionResults, result];
+        
+        // Add to recent execution results (for LLM input) - will be formatted later
+        const recentExecutionResults = [...state.recentExecutionResults, result];
+        
+        return {
+            ...state,
+            executionResults,
+            recentExecutionResults
+        };
+    }
+    
+    // Mark the start of a new execution batch
+    static startExecutionBatch(state) {
+        return {
+            ...state,
+            lastExecutionBatchStartIndex: state.executionResults.length,
+            recentExecutionResults: [] // Clear previous batch
+        };
+    }
+    
+    // Format and prepare recent execution results for LLM (only last batch)
+    // For passed testcases: Only include the successful selector
+    // For failed testcases: Include ALL 3 selectors that were tried
+    static prepareRecentExecutionResultsForLLM(state) {
+        const batchStart = state.lastExecutionBatchStartIndex;
+        const batchEnd = state.executionResults.length;
+        
+        // Get all results from last batch
+        const lastBatchResults = state.executionResults.slice(batchStart, batchEnd);
+        
+        // Format results: passed = only successful selector, failed = all selectors
+        const formattedResults = lastBatchResults.map(result => {
+            if (result.success) {
+                // Passed: Only include the successful selector (the one that worked)
+                return {
+                    testcaseId: result.testcaseId,
+                    success: true,
+                    selector: result.selector, // Only the one that worked
+                    selectorIndex: result.selectorIndex,
+                    shouldContinue: result.shouldContinue,
+                    timestamp: result.timestamp
+                };
+            } else {
+                // Failed: Include ALL 3 selectors that were tried
+                // Use selectors from result if available, otherwise from failedTestcasesWithSelectors
+                const selectors = result.selectors || 
+                    (state.failedTestcasesWithSelectors.find(f => f.testcaseId === result.testcaseId)?.selectors || []);
+                
+                return {
+                    testcaseId: result.testcaseId,
+                    success: false,
+                    error: result.error,
+                    selectors: selectors, // ALL 3 selectors that failed
+                    message: `This testcase failed with the following selectors: ${selectors.join(', ')}. Please generate COMPLETELY DIFFERENT selectors.`,
+                    timestamp: result.timestamp
+                };
+            }
         });
+        
+        return {
+            ...state,
+            recentExecutionResults: formattedResults,
+            lastExecutionBatchEndIndex: batchEnd
+        };
+    }
+    
+    // Reset recent execution results for new iteration
+    static resetRecentExecutionResults(state) {
+        return {
+            ...state,
+            recentExecutionResults: [],
+            lastExecutionBatchStartIndex: state.executionResults.length,
+            lastExecutionBatchEndIndex: state.executionResults.length
+        };
+    }
+    
+    static markTestcasePassed(state, testcaseId) {
+        const passedTestcases = [...state.passedTestcases, testcaseId];
+        const failedTestcases = state.failedTestcases.filter(id => id !== testcaseId);
+        
+        return {
+            ...state,
+            passedTestcases,
+            failedTestcases
+        };
+    }
+    
+    static markTestcaseFailed(state, testcaseId, selectors, error) {
+        const failedTestcases = state.failedTestcases.includes(testcaseId) 
+            ? state.failedTestcases 
+            : [...state.failedTestcases, testcaseId];
+        
+        // Track failed testcase with selectors for regeneration
+        const failedEntry = {
+            testcaseId,
+            selectors: selectors || [],
+            error: error?.message || error || 'Unknown error',
+            timestamp: new Date()
+        };
+        
+        const failedTestcasesWithSelectors = [
+            ...state.failedTestcasesWithSelectors.filter(f => f.testcaseId !== testcaseId),
+            failedEntry
+        ];
+        
+        return {
+            ...state,
+            failedTestcases,
+            failedTestcasesWithSelectors
+        };
+    }
+    
+    static setCurrentSelectors(state, selectors) {
+        return {
+            ...state,
+            currentSelectors: selectors,
+            currentSelectorIndex: 0
+        };
+    }
+    
+    static getNextSelector(state) {
+        if (state.currentSelectorIndex < state.currentSelectors.length) {
+            return {
+                ...state,
+                currentSelectorIndex: state.currentSelectorIndex + 1
+            };
+        }
+        return state;
+    }
+    
+    static hasMoreSelectors(state) {
+        return state.currentSelectorIndex < state.currentSelectors.length;
+    }
+    
+    static incrementRetryCount(state) {
+        return {
+            ...state,
+            retryCount: state.retryCount + 1
+        };
+    }
+    
+    static resetRetryCount(state) {
+        return {
+            ...state,
+            retryCount: 0
+        };
+    }
+    
+    static updateApiCallTime(state) {
+        return {
+            ...state,
+            lastApiCallTime: Date.now()
+        };
+    }
+    
+    static shouldWaitForRateLimit(state) {
+        const timeSinceLastCall = Date.now() - state.lastApiCallTime;
+        return timeSinceLastCall < state.apiRateLimitDelay;
+    }
+    
+    static getWaitTime(state) {
+        const timeSinceLastCall = Date.now() - state.lastApiCallTime;
+        return Math.max(0, state.apiRateLimitDelay - timeSinceLastCall);
     }
 }
 
-module.exports = {
-    WorkflowState,
-    WorkflowStateSchema,
-    StateTransitions,
-    StateValidation,
-    StateFactory
-};
+module.exports = { StateFactory };
+

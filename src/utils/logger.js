@@ -75,6 +75,232 @@ class Logger {
         return colors[level] || '\x1b[37m';
     }
     
+    // Enhanced colored logging for LLM interactions
+    logLLMRequest(prompt, metadata = {}) {
+        const cyan = '\x1b[36m';
+        const yellow = '\x1b[33m';
+        const reset = '\x1b[0m';
+        const bold = '\x1b[1m';
+        
+        console.log(`\n${cyan}${bold}╔════════════════════════════════════════════════════════════════╗${reset}`);
+        console.log(`${cyan}${bold}║           🤖 LLM REQUEST - Sending to API                    ║${reset}`);
+        console.log(`${cyan}${bold}╚════════════════════════════════════════════════════════════════╝${reset}\n`);
+        
+        if (metadata.testcaseId) {
+            console.log(`${yellow}📋 Testcase ID:${reset} ${metadata.testcaseId}`);
+        }
+        if (metadata.model) {
+            console.log(`${yellow}🤖 Model:${reset} ${metadata.model}`);
+        }
+        
+        console.log(`\n${cyan}${bold}📤 PROMPT SENT TO LLM:${reset}`);
+        console.log(`${cyan}─────────────────────────────────────────────────────────${reset}`);
+        
+        // Try to format JSON if present in prompt
+        let formattedPrompt = prompt;
+        try {
+            // Check if prompt contains JSON
+            const jsonMatch = prompt.match(/```(?:json)?\s*(\{[\s\S]*?\}|\[[\s\S]*?\])\s*```/);
+            if (jsonMatch) {
+                const jsonStr = jsonMatch[1];
+                const parsed = JSON.parse(jsonStr);
+                const beautified = JSON.stringify(parsed, null, 2);
+                formattedPrompt = prompt.replace(jsonMatch[0], `\`\`\`json\n${beautified}\n\`\`\``);
+            }
+        } catch (e) {
+            // If JSON parsing fails, use original prompt
+        }
+        
+        // Show complete prompt without truncation
+        console.log(`${cyan}${formattedPrompt}${reset}`);
+        console.log(`${cyan}─────────────────────────────────────────────────────────${reset}\n`);
+        
+        // Also log to file with full prompt
+        this.log('INFO', 'LLM Request', { prompt, ...metadata });
+    }
+    
+    logLLMResponse(response, metadata = {}) {
+        const green = '\x1b[32m';
+        const yellow = '\x1b[33m';
+        const reset = '\x1b[0m';
+        const bold = '\x1b[1m';
+        
+        console.log(`\n${green}${bold}╔════════════════════════════════════════════════════════════════╗${reset}`);
+        console.log(`${green}${bold}║           ✅ LLM RESPONSE - Received from API                 ║${reset}`);
+        console.log(`${green}${bold}╚════════════════════════════════════════════════════════════════╝${reset}\n`);
+        
+        if (metadata.responseTime) {
+            console.log(`${yellow}⏱️  Response Time:${reset} ${metadata.responseTime}ms`);
+        }
+        
+        console.log(`\n${green}${bold}📥 RAW RESPONSE FROM LLM:${reset}`);
+        console.log(`${green}─────────────────────────────────────────────────────────${reset}`);
+        
+        // Try to extract and beautify JSON from response
+        let formattedResponse = response;
+        try {
+            // Try to extract JSON from markdown code blocks
+            const jsonMatch = response.match(/```(?:json)?\s*(\{[\s\S]*?\}|\[[\s\S]*?\])\s*```/);
+            if (jsonMatch) {
+                const jsonStr = jsonMatch[1];
+                const parsed = JSON.parse(jsonStr);
+                const beautified = JSON.stringify(parsed, null, 2);
+                formattedResponse = response.replace(jsonMatch[0], `\`\`\`json\n${beautified}\n\`\`\``);
+            } else {
+                // Try parsing entire response as JSON
+                const parsed = JSON.parse(response);
+                formattedResponse = JSON.stringify(parsed, null, 2);
+            }
+        } catch (e) {
+            // If JSON parsing fails, use original response
+        }
+        
+        // Show complete response without truncation
+        console.log(`${green}${formattedResponse}${reset}`);
+        console.log(`${green}─────────────────────────────────────────────────────────${reset}\n`);
+        
+        // Also log to file with full response
+        this.log('INFO', 'LLM Response', { response, ...metadata });
+    }
+    
+    logTestcaseValidation(testcase, selectors, isValid) {
+        const blue = '\x1b[34m';
+        const green = '\x1b[32m';
+        const red = '\x1b[31m';
+        const yellow = '\x1b[33m';
+        const cyan = '\x1b[36m';
+        const reset = '\x1b[0m';
+        const bold = '\x1b[1m';
+        
+        const statusColor = isValid ? green : red;
+        const statusIcon = isValid ? '✅' : '❌';
+        
+        console.log(`\n${blue}${bold}╔════════════════════════════════════════════════════════════════╗${reset}`);
+        console.log(`${blue}${bold}║           🧪 TESTCASE VALIDATION                              ║${reset}`);
+        console.log(`${blue}${bold}╚════════════════════════════════════════════════════════════════╝${reset}\n`);
+        
+        console.log(`${yellow}📋 Testcase ID:${reset} ${testcase.id || 'N/A'}`);
+        console.log(`${yellow}📝 Description:${reset} ${testcase.description || 'N/A'}`);
+        console.log(`${yellow}🔢 Selectors Generated:${reset} ${selectors?.length || 0}`);
+        
+        console.log(`\n${statusColor}${bold}${statusIcon} VALIDATION RESULT: ${isValid ? 'VALID' : 'INVALID'}${reset}\n`);
+        
+        if (selectors && selectors.length > 0) {
+            console.log(`${blue}${bold}📌 GENERATED SELECTORS (BEAUTIFIED JSON):${reset}`);
+            console.log(`${cyan}─────────────────────────────────────────────────────────${reset}`);
+            
+            // Print beautified JSON for all selectors
+            try {
+                const beautified = JSON.stringify(selectors, null, 2);
+                console.log(`${cyan}${beautified}${reset}`);
+            } catch (e) {
+                // Fallback to individual printing
+                selectors.forEach((selector, index) => {
+                    console.log(`\n${yellow}  Selector ${index + 1}/3:${reset}`);
+                    try {
+                        const beautified = JSON.stringify(selector, null, 2);
+                        console.log(`${cyan}${beautified}${reset}`);
+                    } catch (e2) {
+                        console.log(`    ${blue}Element:${reset} ${selector.element || 'N/A'}`);
+                        console.log(`    ${blue}Selector:${reset} ${selector.selector || 'N/A'}`);
+                        console.log(`    ${blue}Type:${reset} ${selector.interaction_type || 'N/A'}`);
+                        if (selector.confidence) {
+                            console.log(`    ${blue}Confidence:${reset} ${(selector.confidence * 100).toFixed(1)}%`);
+                        }
+                        if (selector.reasoning) {
+                            console.log(`    ${blue}Reasoning:${reset} ${selector.reasoning}`);
+                        }
+                    }
+                });
+            }
+            
+            console.log(`${cyan}─────────────────────────────────────────────────────────${reset}\n`);
+        }
+        
+        this.log('INFO', 'Testcase Validation', { 
+            testcaseId: testcase.id, 
+            isValid, 
+            selectorCount: selectors?.length || 0 
+        });
+    }
+    
+    logSelectorExecution(selector, testcaseId, attempt, success, error = null) {
+        const cyan = '\x1b[36m';
+        const green = '\x1b[32m';
+        const red = '\x1b[31m';
+        const yellow = '\x1b[33m';
+        const reset = '\x1b[0m';
+        
+        const statusColor = success ? green : red;
+        const statusIcon = success ? '✅' : '❌';
+        
+        // Only show detailed log if not successful (to reduce noise)
+        if (!success) {
+            console.log(`\n${cyan}╔════════════════════════════════════════════════════════════════╗${reset}`);
+            console.log(`${cyan}║           🎯 SELECTOR EXECUTION ATTEMPT                        ║${reset}`);
+            console.log(`${cyan}╚════════════════════════════════════════════════════════════════╝${reset}\n`);
+            
+            console.log(`${yellow}📋 Testcase:${reset} ${testcaseId}`);
+            console.log(`${yellow}🔢 Attempt:${reset} ${attempt}/3`);
+            console.log(`${yellow}🎯 Selector:${reset} ${selector.selector || selector}`);
+            console.log(`${yellow}📝 Element:${reset} ${selector.element || 'N/A'}`);
+            console.log(`${yellow}⚡ Action:${reset} ${selector.interaction_type || 'N/A'}`);
+            
+            console.log(`\n${statusColor}${statusIcon} RESULT: FAILED${reset}`);
+            
+            if (error) {
+                console.log(`${red}❌ Error:${reset} ${error.message || error}`);
+            }
+            
+            console.log(`${cyan}─────────────────────────────────────────────────────────${reset}\n`);
+        }
+        
+        this.log(success ? 'INFO' : 'ERROR', 'Selector Execution', {
+            testcaseId,
+            attempt,
+            selector: selector.selector || selector,
+            success,
+            error: error?.message
+        });
+    }
+    
+    // Log testcase completion status in real-time (yellow color)
+    logTestcaseStatus(testcaseNumber, totalTestcases, testcaseId, status, selector = null, error = null) {
+        const yellow = '\x1b[33m';
+        const green = '\x1b[32m';
+        const red = '\x1b[31m';
+        const reset = '\x1b[0m';
+        const bold = '\x1b[1m';
+        
+        const statusColor = status === 'passed' ? green : red;
+        const statusIcon = status === 'passed' ? '✅' : '❌';
+        const statusText = status === 'passed' ? 'PASSED' : 'FAILED';
+        
+        console.log(`\n${yellow}${bold}╔════════════════════════════════════════════════════════════════╗${reset}`);
+        console.log(`${yellow}${bold}║                    🧪 TESTCASE STATUS                         ║${reset}`);
+        console.log(`${yellow}${bold}╚════════════════════════════════════════════════════════════════╝${reset}\n`);
+        
+        console.log(`${yellow}📋 Testcase:${reset} ${testcaseNumber}/${totalTestcases} - ${testcaseId}`);
+        console.log(`${statusColor}${statusIcon} Status: ${statusText}${reset}`);
+        
+        if (status === 'passed' && selector) {
+            console.log(`${green}✅ Successful Selector:${reset} ${selector}`);
+        } else if (status === 'failed' && error) {
+            console.log(`${red}❌ Error:${reset} ${error}`);
+        }
+        
+        console.log(`${yellow}─────────────────────────────────────────────────────────${reset}\n`);
+        
+        this.log(status === 'passed' ? 'INFO' : 'ERROR', 'Testcase Status', {
+            testcaseNumber,
+            totalTestcases,
+            testcaseId,
+            status,
+            selector,
+            error: error?.message || error
+        });
+    }
+    
     log(level, message, metadata = {}) {
         if (this.levels[level] <= this.currentLevel) {
             const formattedMessage = this.formatMessage(level, message, metadata);

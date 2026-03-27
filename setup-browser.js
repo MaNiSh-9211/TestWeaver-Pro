@@ -10,7 +10,7 @@ async function setupBrowser() {
         
         // Try to launch browser to check if it's properly installed
         const browser = await chromium.launch({
-            headless: true,
+            headless: false,
             args: ['--no-sandbox', '--disable-setuid-sandbox']
         });
         
